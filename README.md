@@ -101,7 +101,7 @@ Each blacklist is downloaded and applied at staggered times (21:00–21:55) to m
 
 ## Acknowledgments
 We extend our heartfelt thanks to the following individuals and organizations for their contributions to NuajProtect:
-- **Joshaven Potter**: Special thanks for inspiring this project and maintaining the DShield, SpamHaus, VOIP, Bruteforce, and CINSscore blacklists in MikroTik-compatible format. Their work at [https://joshaven.com](https://joshaven.com) has been instrumental in making NuajProtect possible.
+- **Joshaven Potter**: Special thanks for inspiring this project and maintaining the DShield, SpamHaus, VOIP, Bruteforce, and CINSscore blacklists in MikroTik-compatible format.  You can find more information about Jash at [https://joshaven.com](https://joshaven.com)
 - **DShield** (SANS Internet Storm Center): For their original recommended block list, identifying malicious IP ranges.
 - **SpamHaus**: For their original DROP list, protecting against spam and malicious activities.
 - **VOIP Blacklist Contributors**: For their efforts in combating VOIP abuse and fraud.
