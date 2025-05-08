@@ -173,7 +173,7 @@ For support or inquiries:
 - **Email**: support@nuaj.com
 - **GitHub Issues**: [Open an issue](https://github.com/<your-username>/NuajProtect/issues)
 
-Powered by Halton Data Center - http://haltondc.com
+Powered by Halton Data Center a Nuaj company - http://haltondc.com
 
 ---
 
