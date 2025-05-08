@@ -170,7 +170,7 @@ NuajProtect is provided "as is" with no warranty or liability of any kind, expre
 
 ## Contact
 For support or inquiries:
-- **Email**: support@nuaj.com
+- **Email**: support@nuaj.com or support@haltondc.com
 - **GitHub Issues**: [Open an issue](https://github.com/<your-username>/NuajProtect/issues)
 
 Powered by Halton Data Center a Nuaj company - http://haltondc.com
