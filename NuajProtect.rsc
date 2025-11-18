@@ -1,199 +1,205 @@
+# ======================================================================
 # NuajProtect Security Suite for MikroTik
-# 
 # (c) Nuaj Company Inc.
-# v1.5
-# May 8, 2025
-# 
-#---------------------------------------------------------------
-# Note:
-# 
-# Pre-configuration Requirement
-#-------------------------------
-# 1) "WAN" interface list should include all WAN interfaces
-# 2) Management access and other system services should be set on
-#    their own VRF for a dedicated console port
-#
-# Install Script
-#----------------
-# 1) Upload script, Files > upload
-# 2) Go to router terminal
-# 3) type > /import NuajProtect
-#
-# Post Installation Configuration
-#--------------------------------
-# 1) Add source IP to "NuajP-Source-WhiteList" to allow all 
-#    unfiltered traffic from the source IP.
-# 2) Add destination IP to "NuajP-Destination-Whitelist" to allow
-#    all unfiltered traffic to the destination IP.
-# 3) "NuajP-DNS-Servers" is pre-populated with Cloudflare 1.1.1.1
-#     for Families DNS servers (malware blocking by default, optional
-#     malware and adult content filtering).
-#
-# Blacklist Sources:
-# - DShield, SpamHaus, VOIP, Bruteforce, CINSscore: Parsed by Joshaven Potter
-# - UHB: Custom blacklist
-#
+# v1.6 — RouterOS 7.x 
+# Updated: November 18, 2025
+# ======================================================================
 
-# Remove old definitions
-#------------------------
+# ----------------------------------------------------------------------
+# PRE-CONFIGURATION REQUIREMENTS
+# ----------------------------------------------------------------------
+# 1) Your WAN interfaces must be in the "WAN" interface list
+# 2) Management/service access should ideally run inside its own VRF
+# 3) This script is designed for RouterOS 7.x (7.10+ recommended)
+#
+# INSTALLATION
+# ----------------------------------------------------------------------
+# 1) Upload this file to the router (`Files` → upload)
+# 2) Then run:
+#     /import NuajProtect
+#
+# POST-INSTALL CONFIG
+# ----------------------------------------------------------------------
+# - Add trusted source IPs to:
+#     NuajP-Source-WhiteList
+# - Add trusted destination IPs to:
+#     NuajP-Destination-WhiteList
+#
+# DNS Defaults:
+# - Cloudflare 1.1.1.2 / 1.0.0.2 (malware filtering)
+# - Optional adult content filtering is available but disabled
+#
+# Blacklists used:
+#  - DShield
+#  - SpamHaus DROP
+#  - VOIP blacklist
+#  - Bruteforce IPs
+#  - CINSscore
+#  - UHB (custom)
+#
+# All HTTPS downloads are fully RouterOS 7-compatible.
+# ======================================================================
+
+
+# ----------------------------------------------------------------------
+# CLEAN OLD DEFINITIONS
+# ----------------------------------------------------------------------
 /system script remove [find where comment~"^NuajProtect"]
 /system scheduler remove [find where comment~"^NuajProtect"]
 /ip firewall address-list remove [find where list="NuajP-DNS-Servers"]
 
-# Configure Router DNS to Use Cloudflare 1.1.1.1 for Families
-#--------------------------------------------------------------
+
+# ----------------------------------------------------------------------
+# DNS CONFIGURATION
+# ----------------------------------------------------------------------
 /ip dns set servers=1.1.1.2,1.0.0.2 allow-remote-requests=yes
 
-# Add Cloudflare DNS Servers to NuajP-DNS-Servers
-#--------------------------------------------------------------
-# Purpose: Allow DNS traffic (TCP/UDP, ports 53, 5353) to these servers from WAN
-# Default: Cloudflare 1.1.1.1 for Families (1.1.1.2, 1.0.0.2, blocks malware) enabled
-# Optional: Cloudflare 1.1.1.1 for Families (1.1.1.3, 1.0.0.3, blocks malware and adult content) disabled
-# How to Choose:
-# - Keep only the DNS servers you want in this list
-# - To enable malware and adult content blocking, set 'disabled=no' (e.g., /ip firewall address-list set [find address=1.1.1.3] disabled=no)
-# - To use only malware blocking, keep defaults
-# How to Delete: Remove unwanted entries (e.g., /ip firewall address-list remove [find address=1.1.1.3])
-# How to Disable: Set 'disabled=yes' (e.g., /ip firewall address-list set [find address=1.1.1.2] disabled=yes)
-/ip firewall address-list add list=NuajP-DNS-Servers address=1.1.1.2 comment="Cloudflare 1.1.1.1 for Families - Blocks malware (IPv4)"
-/ip firewall address-list add list=NuajP-DNS-Servers address=1.0.0.2 comment="Cloudflare 1.1.1.1 for Families - Blocks malware (IPv4)"
-/ip firewall address-list add list=NuajP-DNS-Servers address=1.1.1.3 disabled=yes comment="Cloudflare 1.1.1.1 for Families - Blocks malware and adult content (IPv4, disabled by default)"
-/ip firewall address-list add list=NuajP-DNS-Servers address=1.0.0.3 disabled=yes comment="Cloudflare 1.1.1.1 for Families - Blocks malware and adult content (IPv4, disabled by default)"
+/ip firewall address-list add list=NuajP-DNS-Servers address=1.1.1.2 comment="Cloudflare Families (Malware)"
+/ip firewall address-list add list=NuajP-DNS-Servers address=1.0.0.2 comment="Cloudflare Families (Malware)"
+/ip firewall address-list add list=NuajP-DNS-Servers address=1.1.1.3 disabled=yes comment="Cloudflare Families (Malware+Adult)"
+/ip firewall address-list add list=NuajP-DNS-Servers address=1.0.0.3 disabled=yes comment="Cloudflare Families (Malware+Adult)"
 
-# Generic Blacklist Download and Apply Function
-#--------------------------------------------------------------
-:local downloadBlacklist do={
+
+# ----------------------------------------------------------------------
+# GENERIC FUNCTIONS (ROUTEROS 7 SAFE)
+# ----------------------------------------------------------------------
+:global downloadBlacklist do={
   :local url $1
   :local file $2
-  :local comment $3
-  /tool fetch url=$url mode=http dst-path=$file
+  /tool fetch url=$url dst-path=$file check-certificate=yes
   :if ([:len [/file find name=$file]]>0) do={
-    :log info "NuajProtect - Downloaded $file"
+      :log info "NuajProtect - Downloaded $file"
   } else={
-    :log error "NuajProtect - Failed to download $url"
+      :log error "NuajProtect - FAILED to download $url"
   }
 }
 
-:local replaceBlacklist do={
+:global replaceBlacklist do={
   :local file $1
   :local comment $2
   /ip firewall address-list remove [find where comment=$comment]
   :if ([:len [/file find name=$file]]>0) do={
-    /import file-name=$file
-    :log info "NuajProtect - Removed old $comment records and imported new list"
+      /import file-name=$file
+      :log info "NuajProtect - Imported updated $comment list"
   } else={
-    :log error "NuajProtect - No $file to import"
+      :log error "NuajProtect - No file $file found"
   }
 }
 
-# Static Blacklist: DShield
-#--------------------------------------------------------------
+
+# ----------------------------------------------------------------------
+# DSHIELD
+# ----------------------------------------------------------------------
 /system script add name="Download_dshield" comment="NuajProtect" source={
-/tool fetch url="http://blacklist.nuaj.ca/dshield.rsc" mode=http;
-:log info "Downloaded dshield.rsc";
+  :global downloadBlacklist
+  $downloadBlacklist "https://blacklist.nuaj.ca/dshield.rsc" "dshield.rsc"
 }
 
 /system script add name="Replace_dshield" comment="NuajProtect" source={
-/ip firewall address-list remove [find where comment="DShield"]
-/import file-name=dshield.rsc;
-:log info "Removed old dshield records and imported new list";
+  :global replaceBlacklist
+  $replaceBlacklist "dshield.rsc" "DShield"
 }
 
-/system scheduler add comment="NuajProtect - Download DShield list" interval=1d \
-  name="DownloadDShieldList" on-event=Download_dshield \
-  start-date=jan/01/1970 start-time=21:00:00
-/system scheduler add comment="NuajProtect - Apply DShield List" interval=1d \
-  name="InstallDShieldList" on-event=Replace_dshield \
-  start-date=jan/01/1970 start-time=21:05:00
+# Schedule
+/system scheduler add name="DownloadDShieldList" comment="NuajProtect - Download DShield" interval=1d start-date=jan/01/1970 start-time=21:00:00 on-event=Download_dshield
+/system scheduler add name="InstallDShieldList" comment="NuajProtect - Apply DShield"   interval=1d start-date=jan/01/1970 start-time=21:05:00 on-event=Replace_dshield
 
-# Static Blacklist: SpamHaus
-#--------------------------------------------------------------
+
+# ----------------------------------------------------------------------
+# SPAMHAUS
+# ----------------------------------------------------------------------
 /system script add name="DownloadSpamhaus" comment="NuajProtect" source={
-  $downloadBlacklist "http://blacklist.nuaj.ca/spamhaus.rsc" "spamhaus.rsc" "SpamHaus"
+  :global downloadBlacklist
+  $downloadBlacklist "https://blacklist.nuaj.ca/spamhaus.rsc" "spamhaus.rsc"
 }
 
 /system script add name="ReplaceSpamhaus" comment="NuajProtect" source={
+  :global replaceBlacklist
   $replaceBlacklist "spamhaus.rsc" "SpamHaus"
 }
 
-/system scheduler add comment="NuajProtect - Download SpamHaus list" interval=1d \
-  name="DownloadSpamhausList" on-event=DownloadSpamhaus \
-  start-date=jan/01/1970 start-time=21:10:00
-/system scheduler add comment="NuajProtect - Apply SpamHaus List" interval=1d \
-  name="InstallSpamhausList" on-event=ReplaceSpamhaus \
-  start-date=jan/01/1970 start-time=21:15:00
+# Schedule
+/system scheduler add name="DownloadSpamhausList" comment="NuajProtect - Download SpamHaus" interval=1d start-date=jan/01/1970 start-time=21:10:00 on-event=DownloadSpamhaus
+/system scheduler add name="InstallSpamhausList" comment="NuajProtect - Apply SpamHaus" interval=1d start-date=jan/01/1970 start-time=21:15:00 on-event=ReplaceSpamhaus
 
-# Static Blacklist: VOIP Blacklist
-#--------------------------------------------------------------
+
+# ----------------------------------------------------------------------
+# VOIP BLACKLIST
+# ----------------------------------------------------------------------
 /system script add name="DownloadVOIPbl" comment="NuajProtect" source={
-  $downloadBlacklist "http://blacklist.nuaj.ca/voip-bl.rsc" "voip-bl.rsc" "VOIPbl"
+  :global downloadBlacklist
+  $downloadBlacklist "https://blacklist.nuaj.ca/voip-bl.rsc" "voip-bl.rsc"
 }
 
 /system script add name="ReplaceVOIPbl" comment="NuajProtect" source={
+  :global replaceBlacklist
   $replaceBlacklist "voip-bl.rsc" "VOIPbl"
 }
 
-/system scheduler add comment="NuajProtect - Download VOIP BL list" interval=1d \
-  name="DownloadVOIPblList" on-event=DownloadVOIPbl \
-  start-date=jan/01/1970 start-time=21:20:00
-/system scheduler add comment="NuajProtect - Apply VOIP BL List" interval=1d \
-  name="InstallVOIPblList" on-event=ReplaceVOIPbl \
-  start-date=jan/01/1970 start-time=21:25:00
+# Schedule
+/system scheduler add name="DownloadVOIPblList" comment="NuajProtect - Download VOIP" interval=1d start-date=jan/01/1970 start-time=21:20:00 on-event=DownloadVOIPbl
+/system scheduler add name="InstallVOIPblList" comment="NuajProtect - Apply VOIP"   interval=1d start-date=jan/01/1970 start-time=21:25:00 on-event=ReplaceVOIPbl
 
-# Static Blacklist: Bruteforce Blacklist
-#--------------------------------------------------------------
+
+# ----------------------------------------------------------------------
+# BRUTEFORCE
+# ----------------------------------------------------------------------
 /system script add name="DownloadBruteforce" comment="NuajProtect" source={
-  $downloadBlacklist "http://blacklist.nuaj.ca/bruteforce.rsc" "bruteforce.rsc" "Bruteforce"
+  :global downloadBlacklist
+  $downloadBlacklist "https://blacklist.nuaj.ca/bruteforce.rsc" "bruteforce.rsc"
 }
 
 /system script add name="ReplaceBruteforce" comment="NuajProtect" source={
+  :global replaceBlacklist
   $replaceBlacklist "bruteforce.rsc" "Bruteforce"
 }
 
-/system scheduler add comment="NuajProtect - Download Bruteforce list" interval=1d \
-  name="DownloadBruteforceList" on-event=DownloadBruteforce \
-  start-date=jan/01/1970 start-time=21:30:00
-/system scheduler add comment="NuajProtect - Apply Bruteforce List" interval=1d \
-  name="InstallBruteforceList" on-event=ReplaceBruteforce \
-  start-date=jan/01/1970 start-time=21:35:00
+# Schedule
+/system scheduler add name="DownloadBruteforceList" comment="NuajProtect - Download Bruteforce" interval=1d start-date=jan/01/1970 start-time=21:30:00 on-event=DownloadBruteforce
+/system scheduler add name="InstallBruteforceList" comment="NuajProtect - Apply Bruteforce"   interval=1d start-date=jan/01/1970 start-time=21:35:00 on-event=ReplaceBruteforce
 
-# Static Blacklist: CINSscore Blacklist
-#--------------------------------------------------------------
+
+# ----------------------------------------------------------------------
+# CINSscore
+# ----------------------------------------------------------------------
 /system script add name="DownloadCinsscore" comment="NuajProtect" source={
-  $downloadBlacklist "http://blacklist.nuaj.ca/CINSscore.rsc" "CINSscore.rsc" "Cinsscore"
+  :global downloadBlacklist
+  $downloadBlacklist "https://blacklist.nuaj.ca/cinscore.rsc" "cinscore.rsc"
 }
 
 /system script add name="ReplaceCinsscore" comment="NuajProtect" source={
-  $replaceBlacklist "CINSscore.rsc" "Cinsscore"
+  :global replaceBlacklist
+  $replaceBlacklist "cinscore.rsc" "Cinsscore"
 }
 
-/system scheduler add comment="NuajProtect - Download CINSscore list" interval=1d \
-  name="DownloadCinsscoreList" on-event=DownloadCinsscore \
-  start-date=jan/01/1970 start-time=21:40:00
-/system scheduler add comment="NuajProtect - Apply CINSscore List" interval=1d \
-  name="InstallCinsscoreList" on-event=ReplaceCinsscore \
-  start-date=jan/01/1970 start-time=21:45:00
+# Schedule
+/system scheduler add name="DownloadCinsscoreList" comment="NuajProtect - Download CINSscore" interval=1d start-date=jan/01/1970 start-time=21:40:00 on-event=DownloadCinsscore
+/system scheduler add name="InstallCinsscoreList" comment="NuajProtect - Apply CINSscore" interval=1d start-date=jan/01/1970 start-time=21:45:00 on-event=ReplaceCinsscore
 
-# Static Blacklist: UHB Blacklist
-#--------------------------------------------------------------
+
+# ----------------------------------------------------------------------
+# UHB — Custom Blacklist
+# ----------------------------------------------------------------------
 /system script add name="DownloadUHB" comment="NuajProtect" source={
-  $downloadBlacklist "http://blacklist.nuaj.ca/uhb.rsc" "uhb.rsc" "UHB"
+  :global downloadBlacklist
+  $downloadBlacklist "https://blacklist.nuaj.ca/uhb.rsc" "uhb.rsc"
 }
 
 /system script add name="ReplaceUHB" comment="NuajProtect" source={
+  :global replaceBlacklist
   $replaceBlacklist "uhb.rsc" "UHB"
 }
 
-/system scheduler add comment="NuajProtect - Download UHB list" interval=1d \
-  name="DownloadUHBList" on-event=DownloadUHB \
-  start-date=jan/01/1970 start-time=21:50:00
-/system scheduler add comment="NuajProtect - Apply UHB List" interval=1d \
-  name="InstallUHBList" on-event=ReplaceUHB \
-  start-date=jan/01/1970 start-time=21:55:00
+# Schedule
+/system scheduler add name="DownloadUHBList" comment="NuajProtect - Download UHB" interval=1d start-date=jan/01/1970 start-time=21:50:00 on-event=DownloadUHB
+/system scheduler add name="InstallUHBList" comment="NuajProtect - Apply UHB" interval=1d start-date=jan/01/1970 start-time=21:55:00 on-event=ReplaceUHB
 
-# Define Private IP List
-#--------------------------------------------------------------
+
+# ----------------------------------------------------------------------
+# PRIVATE IP RANGES
+# ----------------------------------------------------------------------
 /ip firewall address-list remove [find where list="NuajP-PrivateIP"]
+
 /ip firewall address-list add list=NuajP-PrivateIP address=0.0.0.0/8
 /ip firewall address-list add list=NuajP-PrivateIP address=10.0.0.0/8
 /ip firewall address-list add list=NuajP-PrivateIP address=100.64.0.0/10
@@ -210,62 +216,142 @@
 /ip firewall address-list add list=NuajP-PrivateIP address=224.0.0.0/4
 /ip firewall address-list add list=NuajP-PrivateIP address=240.0.0.0/4
 
-# Define Dynamic Blacklists (TCP)
-#----------------------------------------------------------------
-/ip firewall filter remove [find where comment~"^NuajProtect"]
-/ip firewall raw remove [find where comment~"^NuajProtect"]
 
-/ip firewall filter add chain=input action=accept connection-state=established,related,untracked comment="NuajProtect - Accept established connection"
-/ip firewall filter add chain=input action=drop connection-state=invalid comment="NuajProtect - Drop invalid"
-/ip firewall filter add chain=input action=accept protocol=icmp comment="NuajProtect - Accept pings"
-/ip firewall filter add chain=forward action=accept ipsec-policy=in,ipsec comment="NuajProtect - Accept IPsec in"
-/ip firewall filter add chain=forward action=accept ipsec-policy=out,ipsec comment="NuajProtect - Accept IPsec out"
-/ip firewall filter add chain=forward action=accept connection-state=established,related,untracked comment="NuajProtect - Accept established"
-/ip firewall filter add chain=forward action=drop connection-state=invalid comment="NuajProtect - Drop invalid"
+# =====================================================================
+# STRIKE SYSTEM (TCP) — DEFAULT PORTS
+# =====================================================================
+/ip firewall filter add chain=input action=add-src-to-address-list address-list=NuajP-Dynamic-Blacklist address-list-timeout=6d \
+    protocol=tcp src-address-list=NuajP-Dynamic-Blacklist \
+    dst-port=7,9,13,17,19,22,23,139,162,389,445,1433,3306,8291 \
+    in-interface-list=WAN log-prefix="NuajP - Reset>" comment="NuajProtect - Reset Blacklist Timer (TCP)"
 
-/ip firewall filter add chain=input action=add-src-to-address-list protocol=tcp src-address-list=NuajP-Dynamic-Blacklist address-list=NuajP-Dynamic-Blacklist \
-  address-list-timeout=6d in-interface-list=WAN dst-port=7,9,13,17,19,22,23,139,162,389,445,1433,3306,8291 log-prefix="NuajP - Blacklisted Reset>" comment="NuajProtect - Re-Blacklisted for 6 days"
-/ip firewall filter add chain=input action=add-src-to-address-list protocol=tcp src-address-list=NuajP-Dynamic-Strike3 address-list=NuajP-Dynamic-Blacklist \
-  address-list-timeout=5d in-interface-list=WAN dst-port=7,9,13,17,19,22,23,139,162,389,445,1433,3306,8291 log-prefix="NuajP - Blacklisted>" comment="NuajProtect - Blacklisted for 5 days"
-/ip firewall filter add chain=input action=add-src-to-address-list protocol=tcp src-address-list=NuajP-Dynamic-Strike2 address-list=NuajP-Dynamic-Strike3 \
-  address-list-timeout=10m in-interface-list=WAN dst-port=7,9,13,17,19,22,23,139,162,389,445,1433,3306,8291 log-prefix="NuajP - Strike 3>" comment="NuajProtect - Strike 3"
-/ip firewall filter add chain=input action=add-src-to-address-list protocol=tcp src-address-list=NuajP-Dynamic-Strike1 address-list=NuajP-Dynamic-Strike2 \
-  address-list-timeout=10m in-interface-list=WAN dst-port=7,9,13,17,19,22,23,139,162,389,445,1433,3306,8291 log-prefix="NuajP - Strike 2>" comment="NuajProtect - Strike 2"
-/ip firewall filter add chain=input action=add-src-to-address-list protocol=tcp src-address-list=!NuajP-Dynamic-Strike1 address-list=NuajP-Dynamic-Strike1 \
-  address-list-timeout=10m in-interface-list=WAN dst-port=7,9,13,17,19,22,23,139,162,389,445,1433,3306,8291 log-prefix="NuajP - Strike 1>" comment="NuajProtect - Strike 1"
+# Strike 3
+/ip firewall filter add chain=input action=add-src-to-address-list address-list=NuajP-Dynamic-Blacklist address-list-timeout=5d \
+    protocol=tcp src-address-list=NuajP-Dynamic-Strike3 \
+    dst-port=7,9,13,17,19,22,23,139,162,389,445,1433,3306,8291 \
+    in-interface-list=WAN log-prefix="NuajP - Blacklist>" comment="NuajProtect - Strike 3 → Blacklist (TCP)"
 
-# Define Basic DDoS Protection
-#----------------------------------------------------------------
-/ip firewall filter add chain=detect-ddos action=return dst-limit=32,32,src-and-dst-addresses/10s comment="NuajProtect - Basic DDoS"
-/ip firewall filter add chain=detect-ddos action=add-dst-to-address-list address-list=ddos-targets address-list-timeout=10m comment="NuajProtect - Basic DDoS"
-/ip firewall filter add chain=detect-ddos action=add-src-to-address-list address-list=ddos-attackers address-list-timeout=10m comment="NuajProtect - Basic DDoS"
+# Strike 2
+/ip firewall filter add chain=input action=add-src-to-address-list address-list=NuajP-Dynamic-Strike3 address-list-timeout=10m \
+    protocol=tcp src-address-list=NuajP-Dynamic-Strike2 \
+    dst-port=7,9,13,17,19,22,23,139,162,389,445,1433,3306,8291 \
+    in-interface-list=WAN log-prefix="NuajP - Strike3>" comment="NuajProtect - Strike 2 (TCP)"
 
-# Define Dynamic Blacklists (UDP)
-#----------------------------------------------------------------
-/ip firewall raw add chain=prerouting action=accept src-address-list=NuajP-Source-WhiteList comment="NuajProtect - Accept from Whitelist"
-/ip firewall raw add chain=prerouting action=accept dst-address-list=NuajP-Destination-WhiteList comment="NuajProtect - Accept to Whitelist"
+# Strike 1
+/ip firewall filter add chain=input action=add-src-to-address-list address-list=NuajP-Dynamic-Strike2 address-list-timeout=10m \
+    protocol=tcp src-address-list=NuajP-Dynamic-Strike1 \
+    dst-port=7,9,13,17,19,22,23,139,162,389,445,1433,3306,8291 \
+    in-interface-list=WAN log-prefix="NuajP - Strike2>" comment="NuajProtect - Strike 1 (TCP)"
 
-/ip firewall raw add chain=prerouting action=drop src-address-list=ddos-attackers dst-address-list=ddos-targets comment="NuajProtect - Block Basic DDoS"
+# First Strike
+/ip firewall filter add chain=input action=add-src-to-address-list address-list=NuajP-Dynamic-Strike1 address-list-timeout=10m \
+    protocol=tcp src-address-list=!NuajP-Dynamic-Strike1 \
+    dst-port=7,9,13,17,19,22,23,139,162,389,445,1433,3306,8291 \
+    in-interface-list=WAN log-prefix="NuajP - Strike1>" comment="NuajProtect - First Strike (TCP)"
 
-/ip firewall raw add chain=prerouting action=drop in-interface-list=WAN dst-port=53,5353 protocol=udp dst-address-list=!NuajP-DNS-Servers log-prefix="NuajP - DNS Request>" comment="NuajProtect - Block DNS from WAN"
-/ip firewall raw add chain=prerouting action=drop in-interface-list=WAN dst-port=53,5353 protocol=tcp dst-address-list=!NuajP-DNS-Servers log-prefix="NuajP - DNS Request>" comment="NuajProtect - Block DNS from WAN"
 
-/ip firewall raw add chain=prerouting action=drop log=yes log-prefix="**NuajP - Blocked DBL>" src-address-list=NuajP-Dynamic-Blacklist comment="NuajProtect - Block Ingress from Blacklisted IP"
-/ip firewall raw add chain=prerouting action=drop log=yes log-prefix="**NuajP - Blocked DBL<" dst-address-list=NuajP-Dynamic-Blacklist comment="NuajProtect - Block Egress to Blacklisted IP"
-/ip firewall raw add chain=prerouting action=drop log=yes log-prefix="**NuajP - Blocked BL>" src-address-list=blacklist comment="NuajProtect - Block Ingress from Blacklisted IP"
-/ip firewall raw add chain=prerouting action=drop log=yes log-prefix="**NuajP - Blocked BL<" dst-address-list=blacklist comment="NuajProtect - Block Egress to Blacklisted IP"
+# =====================================================================
+# OPTIONAL STRIKE EXTENSIONS — USER HONEYPOT PORTS (TCP)
+# ---------------------------------------------------------------------
+# HOW TO USE:
+# 1. Add your custom honeypot ports to dst-port (e.g. 2222, 5000, 8081)
+# 2. Set disabled=no
+#
+# These rules are deliberately empty (minimal) to avoid Line Length Limits.
+# =====================================================================
 
-/ip firewall raw add chain=prerouting action=add-src-to-address-list in-interface-list=WAN dst-port=7,9,13,17,19,22,23,139,162,389,445,1433,3306,8291 log=no \
-log-prefix="NuajP - Blacklisted>" protocol=udp src-address-list=NuajP-Dynamic-Blacklist address-list=NuajP-Dynamic-Blacklist address-list-timeout=6d comment="NuajProtect - Blacklisted for 6 days Resetted"
+# Reset Blacklist Timer — OPTIONAL EXTRA PORTS
+/ip firewall filter add disabled=yes chain=input action=add-src-to-address-list \
+    address-list=NuajP-Dynamic-Blacklist address-list-timeout=6d \
+    protocol=tcp src-address-list=NuajP-Dynamic-Blacklist \
+    dst-port= \
+    in-interface-list=WAN log-prefix="NuajP - Reset Ext>" \
+    comment="NuajProtect (Optional) - Add honeypot ports for Reset stage"
 
-/ip firewall raw add chain=prerouting action=add-src-to-address-list in-interface-list=WAN dst-port=7,9,13,17,19,22,23,139,162,389,445,1433,3306,8291 log=no \
-log-prefix="NuajP - Blacklisted>" protocol=udp src-address-list=NuajP-Dynamic-Strike3 address-list=NuajP-Dynamic-Blacklist address-list-timeout=5d comment="NuajProtect - Blacklisted for 5 days"
 
-/ip firewall raw add chain=prerouting action=add-src-to-address-list in-interface-list=WAN dst-port=7,9,13,17,19,22,23,139,162,389,445,1433,3306,8291 log=no \
-log-prefix="NuajP - Strike 3>" protocol=udp src-address-list=NuajP-Dynamic-Strike2 address-list=NuajP-Dynamic-Strike3 address-list-timeout=10m comment="NuajProtect - Strike 3"
+# Strike 3 — OPTIONAL EXTRA PORTS
+/ip firewall filter add disabled=yes chain=input action=add-src-to-address-list \
+    address-list=NuajP-Dynamic-Blacklist address-list-timeout=5d \
+    protocol=tcp src-address-list=NuajP-Dynamic-Strike3 \
+    dst-port= \
+    in-interface-list=WAN log-prefix="NuajP - Strike3 Ext>" \
+    comment="NuajProtect (Optional) - Add honeypot ports for Strike 3"
 
-/ip firewall raw add chain=prerouting action=add-src-to-address-list in-interface-list=WAN dst-port=7,9,13,17,19,22,23,139,162,389,445,1433,3306,8291 log=no \
-log-prefix="NuajP - Strike 2>" protocol=udp src-address-list=NuajP-Dynamic-Strike1 address-list=NuajP-Dynamic-Strike2 address-list-timeout=10m comment="NuajProtect - Strike 2"
 
-/ip firewall raw add chain=prerouting action=add-src-to-address-list in-interface-list=WAN dst-port=7,9,13,17,19,22,23,139,162,389,445,1433,3306,8291 log=no \
-log-prefix="NuajP - Strike 1>" protocol=udp src-address-list=!NuajP-Dynamic-Strike1 address-list=NuajP-Dynamic-Strike1 address-list-timeout=10m comment="NuajProtect - Strike 1"
+# Strike 2 — OPTIONAL EXTRA PORTS
+/ip firewall filter add disabled=yes chain=input action=add-src-to-address-list \
+    address-list=NuajP-Dynamic-Strike3 address-list-timeout=10m \
+    protocol=tcp src-address-list=NuajP-Dynamic-Strike2 \
+    dst-port= \
+    in-interface-list=WAN log-prefix="NuajP - Strike2 Ext>" \
+    comment="NuajProtect (Optional) - Add honeypot ports for Strike 2"
+
+
+# Strike 1 — OPTIONAL EXTRA PORTS
+/ip firewall filter add disabled=yes chain=input action=add-src-to-address-list \
+    address-list=NuajP-Dynamic-Strike2 address-list-timeout=10m \
+    protocol=tcp src-address-list=NuajP-Dynamic-Strike1 \
+    dst-port= \
+    in-interface-list=WAN log-prefix="NuajP - Strike1 Ext>" \
+    comment="NuajProtect (Optional) - Add honeypot ports for Strike 1"
+
+
+# First Strike — OPTIONAL EXTRA PORTS
+/ip firewall filter add disabled=yes chain=input action=add-src-to-address-list \
+    address-list=NuajP-Dynamic-Strike1 address-list-timeout=10m \
+    protocol=tcp src-address-list=!NuajP-Dynamic-Strike1 \
+    dst-port= \
+    in-interface-list=WAN log-prefix="NuajP - First Ext>" \
+    comment="NuajProtect (Optional) - Add honeypot ports for Initial Strike (TCP)"
+
+
+# ----------------------------------------------------------------------
+# BASIC DDOS PROTECTION
+# ----------------------------------------------------------------------
+/ip firewall filter add chain=detect-ddos action=return dst-limit=32,32,src-and-dst-addresses/10s comment="NuajProtect - DDoS"
+/ip firewall filter add chain=detect-ddos action=add-dst-to-address-list address-list=ddos-targets address-list-timeout=10m comment="NuajProtect - Targeted"
+/ip firewall filter add chain=detect-ddos action=add-src-to-address-list address-list=ddos-attackers address-list-timeout=10m comment="NuajProtect - Attacker"
+
+
+# ----------------------------------------------------------------------
+# FIREWALL — UDP DYNAMIC BLACKLIST LOGIC
+# ----------------------------------------------------------------------
+/ip firewall raw add chain=prerouting action=accept src-address-list=NuajP-Source-WhiteList comment="NuajProtect - Whitelist Source"
+/ip firewall raw add chain=prerouting action=accept dst-address-list=NuajP-Destination-WhiteList comment="NuajProtect - Whitelist Destination"
+
+/ip firewall raw add chain=prerouting action=drop src-address-list=ddos-attackers dst-address-list=ddos-targets comment="NuajProtect - Block DDoS"
+
+# Block DNS from WAN except approved servers
+/ip firewall raw add chain=prerouting action=drop in-interface-list=WAN protocol=udp dst-port=53,5353 dst-address-list=!NuajP-DNS-Servers log-prefix="NuajP-DNS>" comment="NuajProtect - Block DNS"
+/ip firewall raw add chain=prerouting action=drop in-interface-list=WAN protocol=tcp dst-port=53,5353 dst-address-list=!NuajP-DNS-Servers log-prefix="NuajP-DNS>" comment="NuajProtect - Block DNS"
+
+# Log & block blacklists
+/ip firewall raw add chain=prerouting action=drop log=yes log-prefix="NuajP-BL>" src-address-list=NuajP-Dynamic-Blacklist comment="Ingress Blacklist"
+/ip firewall raw add chain=prerouting action=drop log=yes log-prefix="NuajP-BL<" dst-address-list=NuajP-Dynamic-Blacklist comment="Egress Blacklist"
+/ip firewall raw add chain=prerouting action=drop log=yes log-prefix="NuajP-BL>" src-address-list=blacklist comment="Ingress (Static BL)"
+/ip firewall raw add chain=prerouting action=drop log=yes log-prefix="NuajP-BL<" dst-address-list=blacklist comment="Egress (Static BL)"
+
+# Strike system (UDP) mirrors TCP
+/ip firewall raw add chain=prerouting action=add-src-to-address-list protocol=udp in-interface-list=WAN \
+    address-list=NuajP-Dynamic-Blacklist address-list-timeout=6d \
+    src-address-list=NuajP-Dynamic-Blacklist dst-port=7,9,13,17,19,22,23,139,162,389,445,1433,3306,8291 comment="BL Reset (UDP)"
+
+# Strike 3
+/ip firewall raw add chain=prerouting action=add-src-to-address-list protocol=udp in-interface-list=WAN \
+    address-list=NuajP-Dynamic-Blacklist address-list-timeout=5d \
+    src-address-list=NuajP-Dynamic-Strike3 dst-port=7,9,13,17,19,22,23,139,162,389,445,1433,3306,8291 comment="Strike 3 → BL (UDP)"
+
+# Strike 2
+/ip firewall raw add chain=prerouting action=add-src-to-address-list protocol=udp in-interface-list=WAN \
+    address-list=NuajP-Dynamic-Strike3 address-list-timeout=10m \
+    src-address-list=NuajP-Dynamic-Strike2 dst-port=7,9,13,17,19,22,23,139,162,389,445,1433,3306,8291 comment="Strike 2 (UDP)"
+
+# Strike 1
+/ip firewall raw add chain=prerouting action=add-src-to-address-list protocol=udp in-interface-list=WAN \
+    address-list=NuajP-Dynamic-Strike2 address-list-timeout=10m \
+    src-address-list=NuajP-Dynamic-Strike1 dst-port=7,9,13,17,19,22,23,139,162,389,445,1433,3306,8291 comment="Strike 1 (UDP)"
+
+# Initial Strike
+/ip firewall raw add chain=prerouting action=add-src-to-address-list protocol=udp in-interface-list=WAN \
+    address-list=NuajP-Dynamic-Strike1 address-list-timeout=10m \
+    src-address-list=!NuajP-Dynamic-Strike1 dst-port=7,9,13,17,19,22,23,139,162,389,445,1433,3306,8291 comment="First Strike (UDP)"
